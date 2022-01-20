@@ -218,7 +218,7 @@ chatbot.on('commands', async function (event) {
   }
 
   else if (second_command === 'multipoll') {
-    var test
+
     a_vote = 0
     b_vote = 0
     c_vote = 0
