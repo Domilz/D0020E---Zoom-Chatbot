@@ -3,18 +3,20 @@ require('dotenv').config()
 const express = require('express')
 const bodyParser = require('body-parser')
 const request = require('request')
-// db const and connection here
-// having some major issues with the queries to DB since those parts are rewritten
 
+const repeatFunction = require('./functions/repeat.js')
+const pollFunction = require('./functions/poll.js')
+const multipollFunction = require('./functions/multipoll.js')
+const coinflipFunction = require('./functions/coinflip.js')
 
+// Gigaomega object
 const {
   oauth2,
   client
 } = require('@zoomus/chatbot')
 const oauth2Client = oauth2(process.env.client_id, process.env.client_secret)
 
-// the zoomus/chatbot API. not fair, stuff is scuffed.
-// sets up chatbot object and adds a help message when user types "/vote help"
+// Sets up chatbot object and adds a help message when user types "/vote help"
 let chatbot = client(process.env.client_id, process.env.verification_token, process.env.bot_jid)
   .commands([{
     command: '/' + process.env.slash_command,
@@ -36,13 +38,6 @@ app.get('/authorize', async function (req, res) {
   res.send('Thanks for installing the zChatbot for Zoom!')
 })
 
-/* TODO:
-  x. Save 'actions' for '/zchatbot poll <question>' in an array somehow and then output after a timer/#votes?
-  y. Should try to store token in PostgreSQL somehow. Shouldnt be a problem, dont see the point rn though.
-    - Heroky is fucking me up!
-  z. Should figure out how to split up code, index.js is getting messy and try to get rid of repeating code.
-*/
-
 // recieves slash commands and user actions
 app.post('/' + process.env.slash_command, async function (req, res) {
   try {
@@ -63,16 +58,16 @@ app.post('/' + process.env.slash_command, async function (req, res) {
     res.send(error)
   }
 
-
-  // SELECT query here?
 })
 
 // variables
-let up_vote
-let down_vote
-var poll_results_displayed
-var mpoll_results_displayed
-var command_param_choices
+let upVote
+let downVote
+var pollResultsDisplayed
+var mpollResultsDisplayed
+var commandParamChoices
+let pollCountAlternatives = {}
+
 
 // calls chatbot.on() function below based on what is sent (commands or actions)
 chatbot.on('commands', async function (event) {
@@ -84,236 +79,44 @@ chatbot.on('commands', async function (event) {
   })
 
   // split at first whitespace after /zchatbot, i.e second command is either repeat or poll atm
-  let second_command = event.message.split(" ")[0]
-  console.log(second_command)
-
-
-  if (second_command === 'repeat') {
-
-    // get index of first whitespace and split accordingly
-    var command_param_index = event.message.indexOf(' ')
-    var command_param_splitted = event.payload.cmd.slice(command_param_index)
-
-    console.log('Executing repeat command')
-    //console.log(command_param_splitted)
-
-    // app logic here, sending a chatbot with repeated message
-    with_chatbot_token(send_repeatmsg)
-
-    // functioncall above needs to be replaced
-
-    // removed app.sendMessage, remember sendMessage turns headers into head
-    // every command now has a function that sends a separate 'command' message.
-    function send_repeatmsg(chatbotToken) {
-      request({
-        url: 'https://api.zoom.us/v2/im/chat/messages',
-        method: 'POST',
-        json: true,
-        body: {
-          'robot_jid': process.env.bot_jid,
-          'to_jid': event.payload.toJid,
-          'account_id': event.payload.accountId,
-          'content': {
-            'head': {
-              'text': 'Repeat command header'
-            },
-            'body': [{
-              'type': 'message',
-              'text': 'You sent:' + command_param_splitted
-            }]
-          }
-        },
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + chatbotToken
-        }
-      }, (error, httpResponse, body) => {
-        if (error) {
-          console.log('Error sending chat.', error)
-        } else {
-          console.log(body)
-        }
-      })
+  let secondCommand = event.message.split(' ')[0]
+  var commandParamIndex = event.message.indexOf(' ')
+  var commandParamSplitted = event.payload.cmd.slice(commandParamIndex).trim()
+  if (event.message.split(' ').length > 1) {
+    if (secondCommand === 'repeat') {
+      withChatbotToken(repeatFunction)
+    } 
+    else if (secondCommand === 'coinflip') {
+      withChatbotToken(coinflipFunction)
     }
-  } 
+    else if (secondCommand === 'poll') {
   
-  else if (second_command === 'poll') {
-
-    up_vote = 0
-    down_vote = 0
-    poll_results_displayed = true
-
-    // repeat
-    var command_param_index = event.message.indexOf(' ')
-    var command_param_splitted = event.payload.cmd.slice(command_param_index)
-    console.log('Executing poll command')
-
-    
-    try {
-
-      // app logic here, sending a chatbot message with buttons
-      with_chatbot_token(send_pollmsg)
-      //console.log(event.message)
-
-      // repeat, create a more general function to pass in arguments that are needed for body/head
-      function send_pollmsg(chatbotToken) {
-        request({
-          url: 'https://api.zoom.us/v2/im/chat/messages',
-          method: 'POST',
-          json: true,
-          body: {
-            'robot_jid': process.env.bot_jid,
-            'to_jid': event.payload.toJid,
-            'account_id': event.payload.accountId,
-            'content': {
-              'head': {
-                'text': 'Vote poll command header'
-              },
-              'body': [{
-                'type': 'section',
-                'sections': [{
-                    'type': 'message',
-                    'text': command_param_splitted
-                  },
-                  {
-                    'type': 'actions',
-                    'items': [{
-                        'text': 'Up Vote',
-                        'value': 'up-vote',
-                        'style': 'Primary'
-                      },
-                      {
-                        'text': 'Down Vote',
-                        'value': 'down-vote',
-                        'style': 'Danger'
-                      },
-                      {
-                        'text': 'Results',
-                        'value': 'poll-results',
-                        'style': ''
-                      }
-                    ]
-                  }
-                ],
-                'footer': 'Poll created by ' + event.payload.userName
-              }]  
-            }
-          },
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + chatbotToken
-          }
-
-        }, (error, httpResponse, body) => {
-          if (error) {
-            console.log('Error sending chat.', error)
-          } else {
-            console.log(body)
-          }
-        })
+      upVote = 0
+      downVote = 0
+      pollResultsDisplayed = true
+  
+      try {
+        withChatbotToken(pollFunction.sendPollMsg)
+      } catch (error) {
+        console.log(error)
       }
-    } catch (error) {
-      console.log(error)
+    }
+    else if (secondCommand === 'multipoll') {
+  
+      mpollResultsDisplayed = true
+      commandParamChoices = commandParamSplitted.split(', ')
+      
+      try {
+        withChatbotToken(multipollFunction.sendMpollMsg)
+      } catch (error) {
+        console.log(error)
+      }
     }
   }
-
-  else if (second_command === 'multipoll') {
-
-    a_vote = 0
-    b_vote = 0
-    c_vote = 0
-    d_vote = 0
-    mpoll_results_displayed = true
-
-    // repeat
-    var command_param_index = event.message.indexOf(' ')
-    var command_param_splitted = event.payload.cmd.slice(command_param_index)
-    command_param_choices = command_param_splitted.split(', ')
-    console.log('Executing mpoll command')
-
-    
-    try {
-
-      // app logic here, sending a chatbot message with buttons
-      with_chatbot_token(send_multipollmsg)
-      //console.log(event.message)
-
-      // repeat, create a more general function to pass in arguments that are needed for body/head
-      function send_multipollmsg(chatbotToken) {
-        request({
-          url: 'https://api.zoom.us/v2/im/chat/messages',
-          method: 'POST',
-          json: true,
-          body: {
-            'robot_jid': process.env.bot_jid,
-            'to_jid': event.payload.toJid,
-            'account_id': event.payload.accountId,
-            'content': {
-              'head': {
-                'text': 'Vote multipoll command header'
-              },
-              'body': [{
-                'type': 'section',
-                'sections': [{
-                    'type': 'message',
-                    'text': command_param_choices[0]
-                  },
-                  {
-                    'type': 'actions',
-                    'items': [{
-                        'text': command_param_choices[1],
-                        'value': 'a-vote',
-                        'style': 'Primary'
-                      },
-                      {
-                        'text': command_param_choices[2],
-                        'value': 'b-vote',
-                        'style': 'Danger'
-                      },
-                      {
-                        'text': command_param_choices[3],
-                        'value': 'c-vote',
-                        'style': ''
-                      },
-                      {
-                        'text': command_param_choices[4],
-                        'value': 'd-vote',
-                        'style': 'Primary'
-                      },
-                      {
-                        'text': 'Results',
-                        'value': 'mpoll-results',
-                        'style': ''
-                      }
-                    ]
-                  }
-                ],
-                'footer': 'Multipoll created by ' + event.payload.userName
-              }]  
-            }
-          },
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + chatbotToken
-          }
-
-        }, (error, httpResponse, body) => {
-          if (error) {
-            console.log('Error sending chat.', error)
-          } else {
-            console.log(body)
-          }
-        })
-      }
-    } catch (error) {
-      console.log(error)
-    }
-  }
-
   
 
   // takes a callback function as a parameter 
-  function with_chatbot_token(callbackFunction) {
+  function withChatbotToken(callbackFunction) {
     request({
       url: `https://zoom.us/oauth/token?grant_type=client_credentials`,
       method: 'POST',
@@ -325,145 +128,44 @@ chatbot.on('commands', async function (event) {
         console.log('Error getting chatbot_token from Zoom.', error)
       } else {
         body = JSON.parse(body)
-        // return workaround
-        callbackFunction(body.access_token)
-        // UPDATE query here?
+        if (secondCommand === 'multipoll') {
+          pollCountAlternatives = callbackFunction(body.access_token, event, commandParamChoices)
+        }
+        else if (secondCommand === 'poll' || secondCommand === 'repeat' || secondCommand === 'coinflip') {
+          callbackFunction(body.access_token, event, commandParamSplitted)
+        }
       }
     })
   }
-
 })
-
-
 
 
 // handles user actions on chatbot messages like editing text and form fields, clicking buttons, and choosing dropdown options
 chatbot.on('actions', async function (event) {
 
-  with_chatbot_token(send_poll_action_msg)
-
-  with_chatbot_token(send_multipoll_action_msg)
-
-  // insert the array here, i guess?
-  function send_poll_action_msg(chatbotToken) {
-    if (event.payload.actionItem.value === 'poll-results' && poll_results_displayed)
-    {
-      poll_results_displayed = false
-      {
-        request({
-          url: 'https://api.zoom.us/v2/im/chat/messages',
-          method: 'POST',
-          json: true,
-          body: {
-            'robot_jid': process.env.bot_jid,
-            'to_jid': event.payload.toJid,
-            'account_id': event.payload.accountId,
-            'content': {
-              'head': {
-                'text': 'Results for poll: ' + event.payload.original.body[0].sections[0].text
-              },
-              'body': [{
-                'type': 'message',
-                'text': 'Up Votes: ' + up_vote + '\n' + 'Down Votes: ' + down_vote
-              }]
-            }
-          },
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + chatbotToken
-          }
-    
-        }, (error, httpResponse, body) => {
-          if (error) {
-            console.log('Error sending chat.', error)
-          } else {
-            console.log(body)
-          }
-        })
-      }
-    }
-  
+  if(event.payload.actionItem.value === "poll-results" && pollResultsDisplayed) {
+    pollResultsDisplayed = false
+    withChatbotToken(pollFunction.sendPollActionMsg)
   }
-
-  function send_multipoll_action_msg(chatbotToken) {
-    if (event.payload.actionItem.value === 'mpoll-results' && mpoll_results_displayed)
-    {
-      mpoll_results_displayed = false
-      {
-        request({
-          url: 'https://api.zoom.us/v2/im/chat/messages',
-          method: 'POST',
-          json: true,
-          body: {
-            'robot_jid': process.env.bot_jid,
-            'to_jid': event.payload.toJid,
-            'account_id': event.payload.accountId,
-            'content': {
-              'head': {
-                'text': 'Results for multipoll: ' + event.payload.original.body[0].sections[0].text
-              },
-              'body': [{
-                'type': 'message',
-                'text': 'Votes on ' + command_param_choices[1] + ': ' + a_vote + 
-                        '\n' + 'Votes on ' + command_param_choices[2] + ': ' + b_vote + 
-                        '\n' + 'Votes on ' + command_param_choices[3] + ': ' + c_vote + 
-                        '\n' + 'Votes on ' + command_param_choices[4] + ': ' + d_vote
-              }]
-            }
-          },
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + chatbotToken
-          }
-    
-        }, (error, httpResponse, body) => {
-          if (error) {
-            console.log('Error sending chat.', error)
-          } else {
-            console.log(body)
-          }
-        })
-      }
-    }
-  
+  else if (event.payload.actionItem.value === "mpoll-results" && mpollResultsDisplayed) {
+    mpollResultsDisplayed = false
+    withChatbotToken(multipollFunction.sendMpollActionMsg)
   }
-
   // count the votes
-  if (event.payload.actionItem.value === 'up-vote')
+  else if (event.payload.actionItem.value === 'up-vote')
   {
-    up_vote += 1
+    upVote += 1
   }
   else if (event.payload.actionItem.value === 'down-vote')
   {
-    down_vote += 1
+    downVote += 1
   }
-  console.log('Up Vote: ' + up_vote)
-  console.log('Down Vote: ' + down_vote)
-  
-
-
   // count the alternatives
-  if (event.payload.actionItem.value === 'a-vote') {
-    a_vote += 1
+  else if (pollCountAlternatives[event.payload.actionItem.value]++){
   }
-  else if (event.payload.actionItem.value === 'b-vote') {
-    b_vote += 1
-  }
-  else if (event.payload.actionItem.value === 'c-vote') {
-    c_vote += 1
-  }
-  else if (event.payload.actionItem.value === 'd-vote') {
-    d_vote += 1
-  }
-
-  console.log('Votes on ' + command_param_choices[1] + ': ' + a_vote)
-  console.log('Votes on ' + command_param_choices[2] + ': ' + b_vote)
-  console.log('Votes on ' + command_param_choices[3] + ': ' + c_vote)
-  console.log('Votes on ' + command_param_choices[4] + ': ' + d_vote)
-
 
   // repeat
-  function with_chatbot_token(callbackFunction) {
+  function withChatbotToken(callbackFunction) {
     request({
       url: `https://zoom.us/oauth/token?grant_type=client_credentials`,
       method: 'POST',
@@ -475,20 +177,20 @@ chatbot.on('actions', async function (event) {
         console.log('Error getting chatbot_token from Zoom.', error)
       } else {
         body = JSON.parse(body)
-        callbackFunction(body.access_token)
-        // UPDATE query here?
+        if (event.payload.actionItem.value === "poll-results") {
+          callbackFunction(body.access_token, event, upVote, downVote)
+        }
+        else if (event.payload.actionItem.value === "mpoll-results") {
+          callbackFunction(body.access_token, event, commandParamChoices, pollCountAlternatives)
+        }
       }
     })
   }
 
 })
 
-
-
-
-
 // Other routes required to publish Chatbot to Zoom App Marketplace (not required if private (your Zoom account only) app)
-// required, support page
+// support page required for marketplace
 app.get('/support', (req, res) => {
   res.send('Contact {{ email }} for support.')
 })
